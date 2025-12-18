@@ -65,7 +65,7 @@ class NmeaToGpsd(Node):
                 return
             except OSError as e:
                 self.get_logger().warn(
-                    f'Failed to connect to gpsd ({e}), retrying...'
+                    f'Failed to connect to gpsd ({e}) on IP {self.gpsd_host} and port {self.gpsd_port}, retrying...'
                 )
                 time.sleep(2.0)
 
