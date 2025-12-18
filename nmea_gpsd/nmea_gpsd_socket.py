@@ -8,6 +8,7 @@ from rclpy.node import Node
 from nmea_msgs.msg import Sentence
 
 
+
 class NmeaToGpsd(Node):
     def __init__(self):
         super().__init__('nmea_to_gpsd')
@@ -36,6 +37,19 @@ class NmeaToGpsd(Node):
             f'to gpsd at {self.gpsd_host}:{self.gpsd_port}'
         )
 
+    def _setup_server(self):
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(('0.0.0.0', self.gpsd_port))
+        self.server.listen(1)
+
+        self.get_logger().info(
+            f'Listening for gpsd connection on port {self.gpsd_port}'
+        )
+
+        self.conn, addr = self.server.accept()
+        self.get_logger().info(f'gpsd connected from {addr}')
+    
     def _connect(self):
         while rclpy.ok():
             try:
@@ -52,25 +66,19 @@ class NmeaToGpsd(Node):
                 time.sleep(2.0)
 
     def nmea_callback(self, msg: Sentence):
-        if self.sock is None:
-            self._connect()
+        if self.conn is None:
             return
 
         sentence = msg.sentence.strip()
         if not sentence.startswith('$'):
             return
 
-        data = (sentence + '\r\n').encode('ascii', errors='ignore')
-
         try:
-            self.sock.sendall(data)
+            self.conn.sendall((sentence + '\r\n').encode('ascii'))
         except OSError:
-            self.get_logger().warn('Lost gpsd connection, reconnecting')
-            try:
-                self.sock.close()
-            except Exception:
-                pass
-            self.sock = None
+            self.get_logger().warn('gpsd disconnected')
+            self.conn.close()
+            self.conn = None
 
 
 def main():
