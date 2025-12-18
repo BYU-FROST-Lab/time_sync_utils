@@ -22,6 +22,10 @@ class NmeaToGpsd(Node):
         self.gpsd_port = self.get_parameter('gpsd_port').value
         self.nmea_topic = self.get_parameter('nmea_topic').value
 
+        self.get_logger().info(
+            f'Connecting to gpsd at {self.gpsd_host}:{self.gpsd_port}'
+        )
+
         self.sock = None
         self._connect()
 
