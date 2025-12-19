@@ -79,6 +79,7 @@ class NmeaToGpsd(Node):
         self.send_sentence(sentence)
 
         # Construct GPRMC using ROS2 timestamp
+        # TODO: THE TIMESTAMP NEEDS TO BE FIXED BECASUE THE DAY ROLLOVER IS NOT HANDLED properly
         GPRMC_sentence = self.gprmc_from_gga(sentence, msg.header.stamp)
         if GPRMC_sentence:
             self.send_sentence(GPRMC_sentence)
