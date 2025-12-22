@@ -43,7 +43,7 @@ install(TARGETS
 
 # Install the config folder to the package's share directory
 install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}/config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_export_dependencies(
