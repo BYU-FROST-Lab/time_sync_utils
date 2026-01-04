@@ -382,8 +382,8 @@ class TopicMonitor : public rclcpp::Node
     // Variables from parameters
     std::string topics_file_;
     bool relative_path_;
-    const double SYNC_THRESHOLD_WARN_SECONDS;
-    const double SYNC_THRESHOLD_ERROR_SECONDS;
+    double SYNC_THRESHOLD_WARN_SECONDS;
+    double SYNC_THRESHOLD_ERROR_SECONDS;
 
     std::vector<std::shared_ptr<TopicInfo>> topic_infos_;
     rclcpp::TimerBase::SharedPtr timer_;
