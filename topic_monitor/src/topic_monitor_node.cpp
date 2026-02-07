@@ -57,7 +57,7 @@ struct TopicInfo
     rclcpp::Time last_timestamp;
     bool received_message_since_start = false;
     std::shared_ptr<rclcpp::GenericSubscription> subscription;
-    QoSConfig qos_config;
+    QoSConfig qos_config;  // Store QoS config for potential debugging/logging/future features
 
     // Constructor to properly initialize all members and avoid warnings
     TopicInfo(std::string name, std::string type)
