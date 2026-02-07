@@ -57,7 +57,7 @@ struct TopicInfo
     rclcpp::Time last_timestamp;
     bool received_message_since_start = false;
     std::shared_ptr<rclcpp::GenericSubscription> subscription;
-    QoSConfig qos_config;  // Store QoS config for potential debugging/logging/future features
+    QoSConfig qos_config;  // Store QoS config for debugging and future features
 
     // Constructor to properly initialize all members and avoid warnings
     TopicInfo(std::string name, std::string type)
@@ -228,7 +228,9 @@ class TopicMonitor : public rclcpp::Node
                             }
                         }
 
-                        RCLCPP_INFO(this->get_logger(), "Subscribing to topic: %s with type: %s", topic_name.c_str(), message_type.c_str());
+                        RCLCPP_INFO(this->get_logger(), "Subscribing to topic: %s with type: %s (QoS: depth=%zu, reliability=%s, durability=%s)", 
+                                    topic_name.c_str(), message_type.c_str(),
+                                    qos_config.history_depth, qos_config.reliability.c_str(), qos_config.durability.c_str());
                         subscribe_to_topic(topic_name, message_type, qos_config);
                     }
                     else
