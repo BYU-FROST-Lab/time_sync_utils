@@ -15,8 +15,8 @@ class NmeaToGpsd(Node):
         # Parameters
         self.declare_parameter('gpsd_host', '127.0.0.1')  # where gpsd listens for UDP
         self.declare_parameter('gpsd_port', 3001)         # UDP port gpsd listens on
-        self.declare_parameter('nmea_topic', '/nmea')
-        self.declare_parameter('utc_topic', '/sbg/utc_time')
+        self.declare_parameter('nmea_topic', 'nmea')
+        self.declare_parameter('utc_topic', 'sbg/utc_time')
         # self.declare_parameter('throttle_count', 10)  # number of messages to skip before publishing
 
         self.gpsd_host = self.get_parameter('gpsd_host').value
