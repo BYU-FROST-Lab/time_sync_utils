@@ -6,6 +6,8 @@
 
 // ADD THESE MISSING MESSAGE TYPE HEADERS
 #include <nav_msgs/msg/odometry.hpp>
+#include <sensor_msgs/msg/fluid_pressure.hpp>
+#include <sensor_msgs/msg/battery_state.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
@@ -357,6 +359,22 @@ class TopicMonitor : public rclcpp::Node
             rclcpp::Serialization<sensor_msgs::msg::MagneticField> serializer;
             serializer.deserialize_message(msg.get(), &point_msg);
             timestamp = point_msg.header.stamp;
+            return true;
+        }
+        else if (message_type == "sensor_msgs/msg/FluidPressure")
+        {
+            sensor_msgs::msg::FluidPressure out_msg;
+            rclcpp::Serialization<sensor_msgs::msg::FluidPressure> serializer;
+            serializer.deserialize_message(msg.get(), &out_msg);
+            timestamp = out_msg.header.stamp;
+            return true;
+        }
+        else if (message_type == "sensor_msgs/msg/BatteryState")
+        {
+            sensor_msgs::msg::BatteryState out_msg;
+            rclcpp::Serialization<sensor_msgs::msg::BatteryState> serializer;
+            serializer.deserialize_message(msg.get(), &out_msg);
+            timestamp = out_msg.header.stamp;
             return true;
         }
         else if (message_type == "geometry_msgs/msg/TwistWithCovarianceStamped")
