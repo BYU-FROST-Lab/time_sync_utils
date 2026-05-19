@@ -1,0 +1,6 @@
+# Example addition to the /etc/default/gpsd file
+
+START_DAEMON="true"
+GPSD_OPTIONS="-n"
+DEVICES="udp://127.0.0.1:3001"
+USBAUTO="false"
