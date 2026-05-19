@@ -1,1 +1,7 @@
 # Initial Commit
+nmea_to_gpsd:
+  ros__parameters:
+    gpsd_host: 127.0.0.1
+    gpsd_port: 3001
+    nmea_topic: nmea
+    utc_topic: sbg/utc_time
