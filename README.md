@@ -5,7 +5,7 @@ This repository contains utilities for handling and monitoring time-synchronized
 
 ## 1. topic_monitor
 
-The `topic_monitor` package is a diagnostic tool used to verify that various ROS 2 topics are active and that their timestamps are synchronized within a specified threshold. It reads a list of target topics from a configuration file and **runs continuously**, maintaining live per-topic statistics (message count, approximate rate, age of the last message, and the latest header timestamp).
+The `topic_monitor` package is a diagnostic tool used to verify that various ROS 2 topics are active and that their timestamps are synchronized within a specified threshold. It reads a list of target topics from a configuration file and **runs continuously**, maintaining live per-topic statistics (message count, approximate rate, age of the last message, and clock skew).
 
 It reports using **standard interfaces only** (no custom messages):
 
@@ -20,12 +20,23 @@ It reports using **standard interfaces only** (no custom messages):
 
 Each monitored topic becomes one `DiagnosticStatus` named `timesync: <topic>`, with:
 
-* **`level`**: `OK` (0), `WARN` (1), `ERROR` (2), or `STALE` (3). `WARN`/`ERROR` come from the timestamp offset crossing the warn/error thresholds; `STALE` means no message (ever, or within `stale_timeout_seconds`); `ERROR` is also used when a header timestamp cannot be extracted.
+* **`level`**: `OK` (0), `WARN` (1), `ERROR` (2), or `STALE` (3). `WARN`/`ERROR` come from the skew difference crossing the warn/error thresholds; `STALE` means no message (ever, or within `stale_timeout_seconds`); `ERROR` is also used when no usable header stamp can be read.
 * **`message`**: human-readable explanation of the level.
 * **`hardware_id`**: the ROS message type.
-* **`values`**: `message count`, `rate (Hz)`, `age (s)`, `has timestamp`, `time diff (s)`, `is reference`.
+* **`values`**: `message count`, `rate (Hz)`, `age (s)`, `has timestamp`, `stamp - arrival (s)`, `skew vs reference (s)`, `is reference`.
 
-The reference topic is the first entry in the topics file that is currently receiving fresh, stamped messages; all other timestamps are compared against it.
+### How the offset is measured
+
+Each time the node reads a header it records that topic's **skew**: `header.stamp - arrival walltime`, i.e. how far in the past the stamp sits relative to the moment the message showed up. This is normally a small negative number — a few milliseconds of transport latency — and it is a property of that one topic.
+
+Topics are then compared by the **difference of their skews**. The reference topic is the first entry in the topics file currently receiving fresh, stamped messages, and every other topic reports `|skew - reference skew|`.
+
+The point of measuring it this way is that skew does not depend on how often a topic publishes. A previous version compared the two topics' most recent header stamps directly, which made a slow topic look badly out of sync purely because its "most recent" stamp was older: a 1 Hz topic checked against a 200 Hz reference showed up to a full second of offset with both clocks perfectly aligned. Skew has no such term, so slow topics and heavily subsampled topics are now measured on the same footing as fast ones.
+
+Two caveats worth knowing:
+
+* Skew bundles clock offset together with **end-to-end publish latency**. A driver that spends 200 ms building a message before publishing it shows a real, steady 0.2 s skew against a low-latency IMU. That is a true difference in when the stamp was taken versus when the data was usable, but it is not a clock problem — read a large constant offset on one topic as a pipeline characteristic, not a chrony failure.
+* Each reported skew is the **median** of the last `skew_window_samples` readings, so a single message delayed by the executor cannot flip a topic to `ERROR`. Sustained changes still come through within a window's worth of messages.
 
 #### Viewing the status lights
 
@@ -51,18 +62,21 @@ You can also call it from the built-in `rqt_service_caller` GUI plugin.
 
 * **`topics_file`** (string, default: `config/topics.yaml`): The path to the YAML file listing topics to monitor.
 * **`relative_path`** (bool, default: `true`): If true, the node looks for the `topics_file` relative to the package's share directory.
-* **`sync_threshold_warn_seconds`** (double, default: `0.1`): The time difference (in seconds) between a topic's timestamp and the reference topic that triggers a warning.
-* **`sync_threshold_error_seconds`** (double, default: `1.0`): The time difference that triggers an error.
+* **`sync_threshold_warn_seconds`** (double, default: `0.1`): The skew difference (in seconds) between a topic and the reference topic that triggers a warning.
+* **`sync_threshold_error_seconds`** (double, default: `1.0`): The skew difference that triggers an error.
 * **`stale_timeout_seconds`** (double, default: `2.0`): If no new message has arrived within this many wall-clock seconds, the topic is reported as `STALE`.
 * **`publish_period_seconds`** (double, default: `1.0`): How often the `DiagnosticArray` is published on `/diagnostics`.
 * **`diagnostic_name_prefix`** (string, default: `timesync`): Prefix on each `DiagnosticStatus.name`, used by the aggregator's `GenericAnalyzer` to group the statuses.
 * **`default_sample_every_n`** (int, default: `1`): Default subsampling for the timestamp check (see below). `1` deserializes every message.
+* **`skew_window_samples`** (int, default: `11`): How many recent skew readings each topic keeps; the reported skew is the median of that window. `1` reports the latest reading unfiltered.
 
 ### Subsampling (`sample_every_n`)
 
 To read a topic's header timestamp the node must deserialize the message. For small messages that's negligible, but deserializing a full `PointCloud2` or `Image` on every message just to read an 8-byte stamp is wasteful. Set `sample_every_n` (globally via `default_sample_every_n`, or per-topic in the topics file) to deserialize the header only every Nth message.
 
-Message **counting, rate, and staleness are unaffected** — they don't require deserialization and are always computed from every message. Only the sync-offset comparison uses the sampled timestamp, so a topic publishing at 10 Hz with `sample_every_n: 10` still refreshes its offset roughly once per second. The first message after startup is always sampled so an initial reading appears promptly.
+Message **counting, rate, and staleness are unaffected** — they don't require deserialization and are always computed from every message. Subsampling only changes how often the skew reading is refreshed, and since clock offset drifts slowly that costs you very little: a 15 Hz topic at `sample_every_n: 20` still refreshes roughly once a second, and the reported value stays correct in between because skew is not a function of message age. The first message after startup is always sampled so an initial reading appears promptly.
+
+Note that a large `sample_every_n` combined with the default `skew_window_samples: 11` means the median window spans a long stretch of wall-clock time, so a genuine step change in skew takes longer to show up. Lower the window if you need a subsampled topic to react quickly.
 
 ```yaml
 topics:

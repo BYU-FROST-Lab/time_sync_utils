@@ -71,6 +71,17 @@ struct TopicInfo
     rclcpp::Time last_received_walltime;   // when the most recent message arrived
     bool received_message_since_start = false;
     int sample_every_n = 1;  // Deserialize the header only every Nth message (1 = every message)
+
+    // Clock skew: (header stamp - arrival walltime) in seconds, for the most recent
+    // sampled messages, newest overwriting oldest. The median of this window is what
+    // gets compared across topics. Unlike a difference of two topics' last-seen
+    // stamps, it is a per-topic quantity, so it does not drift with the topic's rate
+    // or with sample_every_n, and the median rides out the occasional executor or
+    // transport hiccup that a single sample would show as a spike.
+    std::vector<double> skew_samples;
+    size_t skew_write_index = 0;
+    bool has_skew = false;
+
     std::shared_ptr<rclcpp::GenericSubscription> subscription;
     QoSConfig qos_config;  // Store QoS config for debugging and future features
 
@@ -113,6 +124,11 @@ class TopicMonitor : public rclcpp::Node
         // and staleness stay exact regardless; only the sync-offset stamp is sampled.
         this->declare_parameter<int>("default_sample_every_n", 1);
         default_sample_every_n_ = std::max(1, static_cast<int>(this->get_parameter("default_sample_every_n").as_int()));
+        // How many recent (stamp - arrival) samples each topic keeps. The median of the
+        // window is the reported skew, so one delayed message cannot flip a status.
+        // 1 = report the latest sample unfiltered.
+        this->declare_parameter<int>("skew_window_samples", 11);
+        skew_window_samples_ = std::max(1, static_cast<int>(this->get_parameter("skew_window_samples").as_int()));
 
         load_topics_from_file();
 
@@ -320,6 +336,7 @@ class TopicMonitor : public rclcpp::Node
         std::shared_ptr<TopicInfo> current_info = std::make_shared<TopicInfo>(topic_name, message_type);
         current_info->qos_config = qos_config;
         current_info->sample_every_n = sample_every_n;
+        current_info->skew_samples.reserve(static_cast<size_t>(skew_window_samples_));
 
         // Add the shared_ptr to the vector
         topic_infos_.push_back(current_info);
@@ -354,14 +371,32 @@ class TopicMonitor : public rclcpp::Node
             }
 
             rclcpp::Time stamp;
-            if (extract_timestamp(msg, current_info->message_type, stamp))
+            // A zero stamp means the publisher never filled the header in; treat it the
+            // same as a type we cannot deserialize rather than reporting a 55-year skew.
+            if (extract_timestamp(msg, current_info->message_type, stamp) && stamp.nanoseconds() != 0)
             {
+                // Subtract as int64 nanoseconds: exact, and it sidesteps rclcpp::Time's
+                // clock-type check between a header stamp and the node clock.
+                double skew = static_cast<double>(stamp.nanoseconds() - now.nanoseconds()) * 1e-9;
+
                 std::lock_guard<std::mutex> lock(data_mutex_);
                 if (!current_info->last_timestamp.nanoseconds())  // first stamped message
                 {
                     current_info->first_timestamp = stamp;
                 }
                 current_info->last_timestamp = stamp;
+                current_info->has_skew = true;
+
+                const size_t window = static_cast<size_t>(skew_window_samples_);
+                if (current_info->skew_samples.size() < window)
+                {
+                    current_info->skew_samples.push_back(skew);
+                }
+                else
+                {
+                    current_info->skew_samples[current_info->skew_write_index] = skew;
+                }
+                current_info->skew_write_index = (current_info->skew_write_index + 1) % window;
             }
         };
 
@@ -467,23 +502,23 @@ class TopicMonitor : public rclcpp::Node
         array.header.stamp = this->now();
 
         rclcpp::Time now = this->now();
-        rclcpp::Time ref_time(0, 0, now.get_clock_type());
         reference_topic.clear();
 
         std::lock_guard<std::mutex> lock(data_mutex_);
 
         // Pick the reference topic: first in list that is fresh and stamped.
         std::shared_ptr<TopicInfo> reference_info;
+        double ref_skew = 0.0;
         for (auto const &info : topic_infos_)
         {
-            if (info->message_count == 0 || info->last_timestamp.nanoseconds() == 0)
+            if (info->message_count == 0 || !info->has_skew)
             {
                 continue;
             }
             if ((now - info->last_received_walltime).seconds() <= STALE_TIMEOUT_SECONDS)
             {
                 reference_info = info;
-                ref_time = info->last_timestamp;
+                ref_skew = median_of(info->skew_samples);
                 reference_topic = info->topic_name;
                 break;
             }
@@ -498,8 +533,9 @@ class TopicMonitor : public rclcpp::Node
             status.name = diagnostic_name_prefix_ + ": " + info->topic_name;
             status.hardware_id = info->message_type;
 
-            bool has_timestamp = (info->last_timestamp.nanoseconds() != 0);
+            bool has_timestamp = info->has_skew;
             bool is_reference = (info == reference_info);
+            double skew = has_timestamp ? median_of(info->skew_samples) : 0.0;
 
             double age = -1.0;
             double rate = 0.0;
@@ -526,7 +562,7 @@ class TopicMonitor : public rclcpp::Node
             else if (!has_timestamp)
             {
                 status.level = DiagnosticStatus::ERROR;
-                status.message = "Receiving, but no header timestamp could be extracted";
+                status.message = "Receiving, but no usable header stamp (unsupported type, or stamp is zero)";
                 num_error++;
             }
             else if (!reference_info)
@@ -541,7 +577,7 @@ class TopicMonitor : public rclcpp::Node
             }
             else
             {
-                time_diff = std::abs((info->last_timestamp - ref_time).seconds());
+                time_diff = std::abs(skew - ref_skew);
                 if (time_diff > SYNC_THRESHOLD_ERROR_SECONDS)
                 {
                     status.level = DiagnosticStatus::ERROR;
@@ -566,7 +602,8 @@ class TopicMonitor : public rclcpp::Node
             status.values.push_back(make_kv("rate (Hz)", fmt(rate, 2)));
             status.values.push_back(make_kv("age (s)", age >= 0.0 ? fmt(age) : "n/a"));
             status.values.push_back(make_kv("has timestamp", has_timestamp ? "true" : "false"));
-            status.values.push_back(make_kv("time diff (s)", has_timestamp ? fmt(time_diff) : "n/a"));
+            status.values.push_back(make_kv("stamp - arrival (s)", has_timestamp ? fmt(skew) : "n/a"));
+            status.values.push_back(make_kv("skew vs reference (s)", has_timestamp ? fmt(time_diff) : "n/a"));
             status.values.push_back(make_kv("is reference", is_reference ? "true" : "false"));
 
             array.status.push_back(status);
@@ -611,6 +648,19 @@ class TopicMonitor : public rclcpp::Node
         RCLCPP_INFO(this->get_logger(), "check_time_sync: %s", summary.c_str());
     }
 
+    // Median of a topic's retained skew samples; takes a copy so the caller's window
+    // is left untouched by nth_element. Caller holds data_mutex_.
+    static double median_of(std::vector<double> values)
+    {
+        if (values.empty())
+        {
+            return 0.0;
+        }
+        size_t mid = values.size() / 2;
+        std::nth_element(values.begin(), values.begin() + mid, values.end());
+        return values[mid];
+    }
+
     static KeyValue make_kv(const std::string &key, const std::string &value)
     {
         KeyValue kv;
@@ -646,6 +696,7 @@ class TopicMonitor : public rclcpp::Node
     double STALE_TIMEOUT_SECONDS;
     std::string diagnostic_name_prefix_;
     int default_sample_every_n_;
+    int skew_window_samples_;
 
     std::mutex data_mutex_;
     std::vector<std::shared_ptr<TopicInfo>> topic_infos_;
