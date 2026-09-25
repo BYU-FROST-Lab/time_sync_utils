@@ -8,6 +8,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/fluid_pressure.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
@@ -390,6 +391,14 @@ class TopicMonitor : public rclcpp::Node
         {
             sensor_msgs::msg::Image img_msg;
             rclcpp::Serialization<sensor_msgs::msg::Image> serializer;
+            serializer.deserialize_message(msg.get(), &img_msg);
+            timestamp = img_msg.header.stamp;
+            return true;
+        }
+        else if (message_type == "sensor_msgs/msg/CompressedImage")
+        {
+            sensor_msgs::msg::CompressedImage img_msg;
+            rclcpp::Serialization<sensor_msgs::msg::CompressedImage> serializer;
             serializer.deserialize_message(msg.get(), &img_msg);
             timestamp = img_msg.header.stamp;
             return true;

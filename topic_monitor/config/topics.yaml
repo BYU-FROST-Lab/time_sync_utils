@@ -8,6 +8,7 @@
 
 # Below is a list of all of the topic types accepted up to this point.
 #   - nav_msgs/msg/Odometry
+#   - sensor_msgs/msg/CompressedImage
 #   - sensor_msgs/msg/Image
 #   - sensor_msgs/msg/Imu
 #   - sensor_msgs/msg/NavSatFix
